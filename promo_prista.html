@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="bg">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Промо форма</title>
+  <style>
+    :root { --bg:#0b0c10; --card:#121419; --muted:#9aa3af; --fg:#e5e7eb; --accent:#22c55e; }
+    * { box-sizing:border-box; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+    body { margin:0; background:var(--bg); color:var(--fg); display:grid; place-items:center; min-height:100dvh; }
+    .card { width:min(680px, 92vw); background:var(--card); padding:20px; border-radius:16px; box-shadow:0 10px 30px rgba(0,0,0,.35); }
+    h1 { margin:0 0 8px; font-size:24px; }
+    p.sub { margin:0 0 18px; color:var(--muted); }
+    label { display:block; margin:12px 0 6px; font-weight:600; }
+    input, button { width:100%; padding:12px 14px; border-radius:12px; border:1px solid #23262d; background:#0f1116; color:var(--fg); }
+    input::file-selector-button { padding:8px 12px; border:none; border-radius:10px; background:#1f2430; color:var(--fg); margin-right:8px; }
+    .row { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+    .hint { font-size:12px; color:var(--muted); margin-top:6px; }
+    .consent { display:flex; gap:8px; align-items:flex-start; font-size:14px; margin-top:8px; }
+    .consent input { width:auto; }
+    .btn { background:var(--accent); color:#0b0c10; border:none; font-weight:700; cursor:pointer; margin-top:14px; }
+    .btn[disabled] { opacity:.6; cursor:not-allowed; }
+    .preview { margin-top:10px; max-height:220px; width:auto; display:none; border-radius:12px; }
+    .msg { margin-top:12px; padding:10px; border-radius:10px; display:none; }
+    .ok { background:#052e1a; border:1px solid #14532d; }
+    .err { background:#3a0d12; border:1px solid #7f1d1d; }
+    .req { color:#f97316; }
+  </style>
+</head>
+<body>
+<main class="card">
+  <h1>Участвай в промоцията</h1>
+  <p class="sub">Попълни формата и прикачи снимка на касов бон.</p>
+
+  <form id="form" novalidate>
+    <label>Име и фамилия <span class="req">*</span></label>
+    <input name="name" type="text" required placeholder="Иван Иванов" autocomplete="name" />
+
+    <div class="row">
+      <div>
+        <label>Телефон <span class="req">*</span></label>
+        <input name="phone" type="tel" required placeholder="+359..." autocomplete="tel" />
+      </div>
+      <div>
+        <label>Имейл</label>
+        <input name="email" type="email" placeholder="example@mail.com" autocomplete="email" />
+      </div>
+    </div>
+
+    <label>Снимка на касов бон <span class="req">*</span></label>
+    <input id="receipt" name="receipt" type="file" accept="image/*" capture="environment" required />
+    <div class="hint">На телефон „Прикачи“ ще ти предложи камера. Може и от галерията.</div>
+    <img id="preview" class="preview" alt="Преглед на снимка" />
+
+    <label>Съгласие <span class="req">*</span></label>
+    <div class="consent">
+      <input id="consent" type="checkbox" />
+      <div>Съгласен/на съм данните да се използват за участие в промоционалната игра и проверка на валидността на бона.</div>
+    </div>
+
+    <button id="submitBtn" class="btn" type="submit">Изпрати</button>
+    <div id="msg" class="msg"></div>
+  </form>
+</main>
+
+<script>
+  const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyQK_G_aEVzDPjYXz8QE4MrxbsiH8DtNf6e_r5tahIVF26nxKFJXTuJdXI0aa5VVTz_Fw/exec";
+
+  const form = document.getElementById('form');
+  const receiptInput = document.getElementById('receipt');
+  const preview = document.getElementById('preview');
+  const consent = document.getElementById('consent');
+  const submitBtn = document.getElementById('submitBtn');
+  const msg = document.getElementById('msg');
+
+  let pickedFile = null;
+
+  receiptInput.addEventListener('change', () => {
+    const f = receiptInput.files && receiptInput.files[0];
+    if (!f) return;
+    pickedFile = f;
+    const url = URL.createObjectURL(f);
+    preview.src = url;
+    preview.style.display = 'block';
+  });
+
+  function sanitizeFilename(str) {
+    return (str || '')
+            .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-zA-Z0-9_+\-]+/g, '-')
+            .replace(/-+/g, '-')
+            .replace(/^-|-$/g, '')
+            .toLowerCase();
+  }
+
+  async function compressIfPossible(file, maxW = 1600, quality = 0.8) {
+    try {
+      const img = await createImageBitmap(file);
+      const scale = Math.min(1, maxW / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+
+      const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', quality));
+      return new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' });
+    } catch {
+      return file;
+    }
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    msg.style.display = 'none';
+    msg.textContent = '';
+    msg.className = 'msg';
+
+    const data = Object.fromEntries(new FormData(form).entries());
+    if (!data.name?.trim() || !data.phone?.trim()) {
+      showErr('Име и телефон са задължителни.');
+      return;
+    }
+    if (!pickedFile) {
+      showErr('Прикачи снимка на касов бон.');
+      return;
+    }
+    if (!consent.checked) {
+      showErr('Маркирай съгласие.');
+      return;
+    }
+
+    submitBtn.disabled = true; submitBtn.textContent = 'Качване...';
+
+    try {
+      const safeName = sanitizeFilename(data.name);
+      const safePhone = data.phone.replace(/[^\d+]/g, '');
+      const ts = new Date();
+      const pad = n => String(n).padStart(2,'0');
+      const stamp = `${ts.getFullYear()}${pad(ts.getMonth()+1)}${pad(ts.getDate())}-${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}`;
+      const filename = `${safeName}-${safePhone}-${stamp}.jpg`;
+
+      const fileToSend = await compressIfPossible(pickedFile);
+      const base64 = await fileToBase64(fileToSend);
+
+      // ---- ИЗМЕНЕНО: изпращане като FormData ----
+      const fd = new FormData();
+      fd.append('name', data.name.trim());
+      fd.append('phone', safePhone);
+      fd.append('email', (data.email || '').trim());
+      fd.append('filename', filename);
+      fd.append('mimeType', fileToSend.type || 'image/jpeg');
+      fd.append('imageBase64', base64);
+      fd.append('userAgent', navigator.userAgent);
+
+      const resp = await fetch(WEB_APP_URL, { method: 'POST', body: fd });
+      const json = await resp.json();
+      if (!json.ok) throw new Error(json.error || 'Грешка при запис.');
+
+      showOk('Успешно изпратено! Благодарим.');
+      form.reset();
+      preview.style.display = 'none';
+      pickedFile = null;
+    } catch (err) {
+      console.error(err);
+      showErr(err.message || 'Нещо се обърка.');
+    } finally {
+      submitBtn.disabled = false; submitBtn.textContent = 'Изпрати';
+    }
+  });
+
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = reject;
+      fr.readAsDataURL(file);
+    });
+  }
+
+  function showOk(t) { msg.textContent = t; msg.className = 'msg ok'; msg.style.display='block'; }
+  function showErr(t) { msg.textContent = t; msg.className = 'msg err'; msg.style.display='block'; }
+</script>
+</body>
+</html>
